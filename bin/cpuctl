@@ -1,0 +1,517 @@
+#!/system/bin/sh
+# y700_cpuctl - Snapdragon 870 (kona) CPU 频率控制
+# 设备: Lenovo Legion Y700 (TB-9707F) / HyperOS 移植 / Android 14 / kernel 4.19
+#
+# 集群划分:
+#   policy0 = CPU 0-3  300000  - 1804800
+#   policy4 = CPU 4-6  710400  - 2419200
+#   policy7 = CPU 7    844800  - 3187200
+
+PATH=/system/bin:/system/xbin:/data/adb/magisk:$PATH
+export PATH
+
+CFG=/sys/devices/system/cpu/cpufreq
+STATE=/data/adb/y700_cpuctl
+LOCKDIR="$STATE/watch.lock.d"
+P0="$CFG/policy0"
+P4="$CFG/policy4"
+P7="$CFG/policy7"
+INTERVAL=15
+
+# WebUI
+MODDIR=/data/adb/modules/y700_cpuctl
+WEBROOT="$MODDIR/webroot"
+WEBCONF="$MODDIR/httpd.conf"
+BUSYBOX=/data/adb/magisk/busybox
+[ -x "$BUSYBOX" ] || BUSYBOX=busybox
+
+[ -d "$STATE" ] || mkdir -p "$STATE" 2>/dev/null
+[ -f "$STATE/profile" ] || echo balanced > "$STATE/profile"
+[ -f "$STATE/watch_enabled" ] || echo 1 > "$STATE/watch_enabled"
+[ -f "$STATE/temp_limit" ] || echo 48000 > "$STATE/temp_limit"
+
+get() { cat "$1" 2>/dev/null; }
+
+# 脚本自身绝对路径, 用于精确识别守护进程
+SELF=$0
+case "$SELF" in
+    /*) ;;
+    *) SELF=$(readlink -f "$0" 2>/dev/null || echo "$0") ;;
+esac
+
+# 按命令行关键字匹配进程 pid (参数为固定子串, 不含通配)
+pids_of() {
+    ps -A -o PID,ARGS 2>/dev/null | grep -F "$1" | grep -v grep | awk '{print $1}'
+}
+
+# 精确列出守护进程: 先用 ps 粗筛, 再校验 /proc 里的 argv 结构
+# 原因: 只靠 grep 命令行字符串, 任何恰好含该字样的进程都会被误认成守护
+#      (比如在终端里 grep 它), 会导致互斥误判、守护不肯启动
+# 做法: ps 粗筛拿候选, 再读 /proc/<pid>/cmdline 确认 argv 真的是 <sh> <脚本> __watch
+watch_pids() {
+    local p
+    for p in $(ps -A -o PID,ARGS 2>/dev/null | grep -F "$SELF __watch" | grep -v grep | awk '{print $1}'); do
+        set -- $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)
+        [ $# -ge 3 ] || continue
+        [ "$2" = "$SELF" ] && [ "$3" = "__watch" ] && echo "$p"
+    done
+}
+
+# 杀掉所有守护实例 (先 TERM, 1 秒后还在就 KILL)
+kill_watch() {
+    local p
+    for p in $(watch_pids); do
+        [ "$p" = "$$" ] && continue
+        kill "$p" 2>/dev/null
+    done
+    sleep 1
+    for p in $(watch_pids); do
+        [ "$p" = "$$" ] && continue
+        kill -9 "$p" 2>/dev/null
+    done
+}
+
+# 杀掉所有匹配的进程 (先 TERM, 1 秒后还在就 KILL)
+kill_matching() {
+    local pid
+    for pid in $(pids_of "$1"); do
+        case "$pid" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        [ "$pid" = "$$" ] && continue
+        kill "$pid" 2>/dev/null
+    done
+    sleep 1
+    for pid in $(pids_of "$1"); do
+        case "$pid" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        [ "$pid" = "$$" ] && continue
+        kill -9 "$pid" 2>/dev/null
+    done
+}
+
+setgov() {
+    local g="$1" p
+    for p in "$P0" "$P4" "$P7"; do
+        [ -d "$p" ] || continue
+        echo "$g" > "$p/scaling_governor" 2>/dev/null
+    done
+}
+
+# apply1 <policy> <min> <max>
+apply1() {
+    local p="$1" mn="$2" mx="$3" t
+    [ -d "$p" ] || return 0
+    if [ -n "$mn" ] && [ -n "$mx" ] && [ "$mn" -gt "$mx" ]; then
+        t="$mn"; mn="$mx"; mx="$t"
+    fi
+    # 先写 max 再写 min, 否则新 min 可能超过旧 max 而写失败
+    [ -n "$mx" ] && echo "$mx" > "$p/scaling_max_freq" 2>/dev/null
+    [ -n "$mn" ] && echo "$mn" > "$p/scaling_min_freq" 2>/dev/null
+}
+
+# 返回 CPU 集群最高温度 (毫摄氏度)
+temp_mdeg() {
+    local best=0 z ty v
+    for z in /sys/class/thermal/thermal_zone*; do
+        ty=$(get "$z/type")
+        case "$ty" in
+            cpu-*-usr|cpuss-*-usr)
+                v=$(get "$z/temp")
+                case "$v" in
+                    ''|*[!0-9]*) continue ;;
+                esac
+                [ "$v" -gt "$best" ] && best="$v"
+                ;;
+        esac
+    done
+    echo "$best"
+}
+
+profile_apply() {
+    case "$1" in
+        powersave)
+            setgov schedutil
+            apply1 "$P0" 300000 1075200
+            apply1 "$P4" 710400 1574400
+            apply1 "$P7" 844800 1862400 ;;
+        balanced)
+            setgov schedutil
+            apply1 "$P0" 300000 1516800
+            apply1 "$P4" 710400 2054400
+            apply1 "$P7" 844800 2553600 ;;
+        performance)
+            setgov schedutil
+            apply1 "$P0" 300000 1804800
+            apply1 "$P4" 710400 2419200
+            apply1 "$P7" 844800 2841600 ;;
+        game)
+            setgov schedutil
+            apply1 "$P0" 979200 1804800
+            apply1 "$P4" 1286400 2419200
+            apply1 "$P7" 1632000 3187200 ;;
+        max)
+            setgov performance
+            apply1 "$P0" 1804800 1804800
+            apply1 "$P4" 2419200 2419200
+            apply1 "$P7" 3187200 3187200 ;;
+        stock)
+            setgov schedutil
+            apply1 "$P0" 300000 1804800
+            apply1 "$P4" 710400 2419200
+            apply1 "$P7" 844800 3187200 ;;
+        *)
+            return 1 ;;
+    esac
+    return 0
+}
+
+row() {
+    local p="$1" label="$2"
+    [ -d "$p" ] || return 0
+    printf "%-10s %-9s %-9s %-9s %s\n" "$label" "$(get $p/scaling_min_freq)" "$(get $p/scaling_max_freq)" "$(get $p/scaling_cur_freq)" "$(get $p/scaling_governor)"
+}
+
+cmd_status() {
+    local watch_on pid
+    echo "档位    : $(get $STATE/profile)"
+    watch_on=$(get "$STATE/watch_enabled")
+    if [ "$watch_on" = "1" ] && watch_running; then
+        pid=$(watch_pids | head -1)
+        echo "守护    : 运行中 (pid ${pid:-?})"
+    elif [ "$watch_on" = "1" ]; then
+        echo "守护    : 已启用但进程未运行"
+    else
+        echo "守护    : 已关闭"
+    fi
+    echo "温度    : $(temp_mdeg) (m°C, 上限 $(get $STATE/temp_limit))"
+    echo "-----------------------------------------------"
+    printf "%-10s %-9s %-9s %-9s %s\n" 集群 min max cur gov
+    row "$P0" "p0(0-3)"
+    row "$P4" "p4(4-6)"
+    row "$P7" "p7(7)"
+}
+
+cmd_list() {
+    echo "powersave    省电   1.07G / 1.57G / 1.86G"
+    echo "balanced     均衡   1.52G / 2.05G / 2.55G  (默认)"
+    echo "performance  性能   1.80G / 2.42G / 2.84G"
+    echo "game         游戏   不降频 + 抬高最低频"
+    echo "max          全锁最高 (仅供测速, 发热大)"
+    echo "stock        恢复出厂默认"
+    echo "custom       由 cpuctl set 自定义"
+}
+
+cmd_apply() {
+    local p="$1"
+    [ -z "$p" ] && { echo "用法: cpuctl apply <powersave|balanced|performance|game|max|stock>"; return 1; }
+    if profile_apply "$p"; then
+        echo "$p" > "$STATE/profile"
+        echo "已切换: $p"
+        cmd_status
+    else
+        echo "未知档位: $p"
+        return 1
+    fi
+}
+
+cmd_set() {
+    local p
+    case "$1" in
+        p0|0) p="$P0" ;;
+        p4|4) p="$P4" ;;
+        p7|7) p="$P7" ;;
+        *) echo "用法: cpuctl set <p0|p4|p7> <min_freq> <max_freq>"; return 1 ;;
+    esac
+    apply1 "$p" "$2" "$3"
+    echo custom > "$STATE/profile"
+    echo "已设置 $1: min=$2 max=$3"
+    cmd_status
+}
+
+# 守护进程是否真的在跑
+# 不能用 pid 文件 + kill -0 判定: pid 文件跨重启残留旧值, 新系统里该 PID
+# 可能被无关进程占用, 结果误判"守护还在", 开机后守护根本不启动。
+# 这里用锁目录里的 pid + 进程 argv 双重校验
+watch_running() {
+    local holder
+    holder=$(get "$LOCKDIR/pid")
+    is_num "$holder" || return 1
+    kill -0 "$holder" 2>/dev/null || return 1
+    watch_pids | grep -qx "$holder"
+}
+
+cmd_watch_on() {
+    local pid
+    echo 1 > "$STATE/watch_enabled"
+    if watch_running; then
+        echo "守护已在运行 (pid $(get "$STATE/watch.pid"))"
+        return 0
+    fi
+    # 清掉可能残留的旧守护, 避免多个实例互相抢写
+    kill_watch
+    rm -f "$STATE/watch.pid"
+    rm -rf "$LOCKDIR"
+    # 交给独立脚本启动, 避免函数体内的 & 让 mksh 复制调用上下文
+    sh "$MODDIR/bin/watch_spawn.sh" >/dev/null 2>&1
+    # 轮询等待守护写入自己的 pid (最多 6 秒), 固定 sleep 会误报失败
+    local i=0
+    while [ "$i" -lt 30 ]; do
+        pid=$(get "$STATE/watch.pid")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "守护已启动 (pid $pid)"
+            return 0
+        fi
+        sleep 0.2 2>/dev/null || sleep 1
+        i=$((i + 1))
+    done
+    echo "守护启动失败"
+    return 1
+}
+
+cmd_watch_off() {
+    echo 0 > "$STATE/watch_enabled"
+    # 只按进程结构精确杀, 不按 pid 文件杀: 陈旧 pid 可能指向无关进程
+    kill_watch
+    rm -f "$STATE/watch.pid"
+    rm -rf "$LOCKDIR"
+    echo "守护已停止 (频率保持当前值, 不再自动维持)"
+}
+
+cmd___watch() {
+    local prof limit t me holder i
+    me=$$
+    # 单实例互斥用 mkdir 锁: mkdir 在文件系统层是原子的。
+    # 不能用 flock —— 锁的文件描述符会被 sleep / httpd 等子进程继承,
+    # 守护退出后锁仍被占用, 导致 stop 之后 on 立刻失败。
+    # 也不能靠"扫描到别的实例就退出"—— setsid 会 fork 出两个 argv
+    # 完全相同的进程, 它们会互相认为对方已存在而双双退出。
+    if [ "$CPUCTL_WATCH_LOCKED" != "1" ]; then
+        if ! mkdir "$LOCKDIR" 2>/dev/null; then
+            holder=$(get "$LOCKDIR/pid")
+            # 刚 mkdir 成功的对手可能还没来得及写 pid, 稍等再判, 消除竞态
+            if [ -z "$holder" ]; then
+                sleep 0.5
+                holder=$(get "$LOCKDIR/pid")
+            fi
+            if is_num "$holder" && kill -0 "$holder" 2>/dev/null; then
+                exit 0    # 已有守护在跑, 让位
+            fi
+            rm -rf "$LOCKDIR"                      # 上次异常退出的陈旧锁
+            mkdir "$LOCKDIR" 2>/dev/null || exit 0
+        fi
+        echo "$me" > "$LOCKDIR/pid"
+        CPUCTL_WATCH_LOCKED=1
+        export CPUCTL_WATCH_LOCKED
+    fi
+    echo "$me" > "$STATE/watch.pid"
+    while [ "$(get $STATE/watch_enabled)" = "1" ]; do
+        # 兜底: 自己是锁持有者才继续。被 fork 出来的副本会继承
+        # CPUCTL_WATCH_LOCKED=1 而跳过上面的加锁, 靠这一条让它在下一轮退出
+        if [ "$(get "$LOCKDIR/pid")" != "$me" ]; then
+            exit 0
+        fi
+        prof=$(get "$STATE/profile")
+        [ -z "$prof" ] && prof=balanced
+        limit=$(get "$STATE/temp_limit")
+        [ -z "$limit" ] && limit=48000
+        t=$(temp_mdeg)
+        if [ "$t" -gt 0 ] && [ "$t" -ge "$limit" ]; then
+            :   # 已达温度上限, 交给系统温控, 不强行拉频
+        elif [ "$prof" != "custom" ]; then
+            profile_apply "$prof" >/dev/null 2>&1
+        fi
+        # WebUI 守护: 进程掉了就重拉
+        if [ ! -f "$STATE/web_disabled" ] && ! web_alive; then
+            cmd_web_start >/dev/null 2>&1
+        fi
+        # 分段休眠: 收到停止信号时能在 1 秒内反应过来, 不再卡满整个周期
+        i=0
+        while [ "$i" -lt "$INTERVAL" ]; do
+            sleep 1
+            [ "$(get $STATE/watch_enabled)" = "1" ] || break
+            i=$((i + 1))
+        done
+    done
+    rm -rf "$LOCKDIR"
+    rm -f "$STATE/watch.pid"
+}
+
+# ---------------- WebUI ----------------
+is_num() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+web_port() {
+    local p
+    # 优先从实际运行的 httpd 命令行解析, 避免状态文件里的旧端口与实际不符
+    p=$(ps -A -o PID,ARGS 2>/dev/null | grep -F "busybox httpd -f -p 127.0.0.1:" | grep -v grep | head -1 | sed -n 's/.*-p 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p')
+    if ! is_num "$p"; then
+        p=$(get "$STATE/web_port")
+        is_num "$p" || p=8088
+    fi
+    echo "$p"
+}
+
+# 端口上是否已有服务在监听
+port_busy() {
+    echo | "$BUSYBOX" nc -w 1 127.0.0.1 "$1" >/dev/null 2>&1
+}
+
+web_alive() {
+    port_busy "$(web_port)"
+}
+
+# 先 TERM 再 KILL: busybox httpd 对 TERM 不一定响应
+stop_pid() {
+    local p="$1"
+    is_num "$p" || return 0
+    kill "$p" 2>/dev/null
+    sleep 1
+    kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null
+    return 0
+}
+
+web_start_one() {
+    local port="$1"
+    # 交给独立脚本启动: 函数体内不能出现 & 语法, 否则 mksh 会把调用上下文
+    # fork 成子 shell, 造成守护进程自我复制(详见 bin/web_spawn.sh 注释)
+    sh "$MODDIR/bin/web_spawn.sh" "$port" >/dev/null 2>&1
+    sleep 1
+    if port_busy "$port"; then
+        echo "$port" > "$STATE/web_port"
+        return 0
+    fi
+    rm -f "$STATE/web.pid"
+    return 1
+}
+
+cmd_web_start() {
+    local port p
+    if web_alive; then
+        echo "WebUI 已在运行: http://127.0.0.1:$(web_port)/"
+        return 0
+    fi
+    # 再确认一次, 避免 nc 偶发超时导致误杀正在正常服务的实例
+    sleep 1
+    if web_alive; then
+        echo "WebUI 已在运行: http://127.0.0.1:$(web_port)/"
+        return 0
+    fi
+    # 端口无人监听但有 httpd 进程 = 绑定失败的空壳, 会越积越多, 先清掉
+    for p in $(pids_of "busybox httpd -f -p 127.0.0.1:"); do
+        kill -9 "$p" 2>/dev/null
+    done
+    rm -f "$STATE/web_disabled"
+    rm -f "$STATE/web_port"
+    [ -d "$WEBROOT" ] || { echo "WebUI 资源缺失: $WEBROOT"; return 1; }
+    for port in 8088 8089 8090 8091 8092; do
+        port_busy "$port" && continue
+        if web_start_one "$port"; then
+            echo "WebUI 已启动: http://127.0.0.1:$port/"
+            return 0
+        fi
+    done
+    echo "WebUI 启动失败 (端口 8088-8092 均不可用)"
+    return 1
+}
+
+cmd_web_stop() {
+    echo 1 > "$STATE/web_disabled"
+    # 按进程名杀, 不按 pid 文件杀: 陈旧 pid 可能指向无关进程
+    kill_matching "busybox httpd -f -p 127.0.0.1:"
+    rm -f "$STATE/web.pid"
+    if web_alive; then
+        echo "WebUI 停止失败 (端口 $(web_port) 仍被占用)"
+        return 1
+    fi
+    echo "WebUI 已停止"
+}
+
+cmd_web_status() {
+    local wp
+    if web_alive; then
+        wp=$(pids_of "busybox httpd -f -p 127.0.0.1:" | head -1)
+        echo "WebUI : 运行中 (pid ${wp:-?}, 端口 $(web_port))"
+        echo "        地址 http://127.0.0.1:$(web_port)/"
+    elif [ -f "$STATE/web_disabled" ]; then
+        echo "WebUI : 已关闭"
+    else
+        echo "WebUI : 未运行"
+    fi
+}
+
+cmd_web_open() {
+    cmd_web_start >/dev/null 2>&1
+    local port
+    port=$(web_port)
+    # 优先指定自带浏览器, 某些 ROM 上通用 VIEW intent 会被前台应用吞掉
+    am start --user 0 -n com.android.browser/.BrowserActivity \
+        -a android.intent.action.VIEW -d "http://127.0.0.1:$port/" >/dev/null 2>&1 \
+    || am start --user 0 -a android.intent.action.VIEW -d "http://127.0.0.1:$port/" >/dev/null 2>&1
+    echo "已在浏览器打开: http://127.0.0.1:$port/"
+}
+
+cmd_boot() {
+    local prof
+    # 先清掉上次开机残留的 pid 与锁目录, 这些 PID 在新系统里已无意义
+    rm -f "$STATE/watch.pid" "$STATE/web.pid"
+    rm -rf "$LOCKDIR"
+    sleep 25
+    prof=$(get "$STATE/profile")
+    [ -z "$prof" ] && prof=balanced
+    [ "$prof" != "custom" ] && profile_apply "$prof" >/dev/null 2>&1
+    if [ "$(get $STATE/watch_enabled)" = "1" ]; then
+        cmd_watch_on >/dev/null 2>&1
+    fi
+    [ -f "$STATE/web_disabled" ] || cmd_web_start >/dev/null 2>&1
+}
+
+case "$1" in
+    status|st)   cmd_status ;;
+    list|ls)     cmd_list ;;
+    apply)       cmd_apply "$2" ;;
+    set)         cmd_set "$2" "$3" "$4" ;;
+    watch)
+        case "$2" in
+            on)     cmd_watch_on ;;
+            off)    cmd_watch_off ;;
+            status|st)
+                if [ "$(get $STATE/watch_enabled)" = "1" ] && watch_running; then
+                    echo "守护: 运行中"
+                elif [ "$(get $STATE/watch_enabled)" = "1" ]; then
+                    echo "守护: 已启用但进程未运行"
+                else
+                    echo "守护: 已关闭"
+                fi ;;
+            *)      echo "用法: cpuctl watch <on|off|status>" ;;
+        esac ;;
+    temp)        temp_mdeg ;;
+    boot)        cmd_boot ;;
+    __watch)     cmd___watch ;;
+    web)
+        case "$2" in
+            on|start)    cmd_web_start ;;
+            off|stop)    cmd_web_stop ;;
+            restart)     cmd_web_stop >/dev/null; sleep 1; cmd_web_start ;;
+            status)      cmd_web_status ;;
+            open)        cmd_web_open ;;
+            port)        web_port ;;
+            *)           echo "用法: cpuctl web <on|off|restart|status|open>" ;;
+        esac ;;
+    *)
+        echo "y700_cpuctl - CPU 频率控制"
+        echo "  cpuctl status                 查看当前状态"
+        echo "  cpuctl list                   列出档位"
+        echo "  cpuctl apply <档位>           切换档位"
+        echo "  cpuctl set <p0|p4|p7> <min> <max>  自定义单集群"
+        echo "  cpuctl watch <on|off>         开启/关闭自动维持"
+        echo "  cpuctl temp                   读取 CPU 温度"
+        echo "  cpuctl web on|off|restart     启停图形界面"
+        echo "  cpuctl web open               在浏览器打开图形界面"
+        ;;
+esac

@@ -1,0 +1,6 @@
+id=y700_cpuctl
+name=Y700 一代 CPU 调频 (TB-9707F)
+version=v1.2
+versionCode=3
+author=键子刘
+description=联想拯救者 Y700 一代 (TB-9707F / sheng), 骁龙 870 (kona) 三集群 CPU 频率分档控制, 带图形界面。点模块「操作」按钮或执行 su -c cpuctl web open 打开界面 (http://127.0.0.1:8088/)。终端: su -c cpuctl status 查看状态。档位: powersave / balanced / performance / game / max / stock

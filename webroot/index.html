@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#070b10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Y700 CPU 调频</title>
+<style>
+:root{
+  --bg:#070b10;
+  --txt:#e9eff8;
+  --dim:rgba(233,239,248,.56);
+  --dim2:rgba(233,239,248,.34);
+  --line:rgba(255,255,255,.075);
+  --card:linear-gradient(160deg,rgba(255,255,255,.065),rgba(255,255,255,.022));
+  --acc:#3ee0c5;
+  --acc2:#5c8cff;
+  --warm:#ffb454;
+  --hot:#ff5f5f;
+  --r:18px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg);
+  color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:15px;
+  line-height:1.45;
+  max-width:520px;
+  margin:0 auto;
+  padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 28px);
+  min-height:100vh;
+  overflow-x:hidden;
+  font-variant-numeric:tabular-nums;
+}
+body::before,body::after{
+  content:"";position:fixed;z-index:-1;border-radius:50%;pointer-events:none;
+}
+body::before{
+  width:340px;height:340px;top:-150px;left:-110px;
+  background:radial-gradient(circle,rgba(62,224,197,.20),transparent 68%);
+}
+body::after{
+  width:400px;height:400px;top:80px;right:-180px;
+  background:radial-gradient(circle,rgba(92,140,255,.16),transparent 68%);
+}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.hd-l{display:flex;align-items:center;gap:12px}
+.logo{
+  width:42px;height:42px;border-radius:13px;flex:none;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;letter-spacing:.3px;
+  color:#04120f;
+  background:linear-gradient(140deg,var(--acc),#59b8ff);
+  box-shadow:0 6px 18px rgba(62,224,197,.28);
+}
+h1{font-size:18px;font-weight:650;letter-spacing:.2px}
+.sub{font-size:11.5px;color:var(--dim2);margin-top:1px}
+.dot{
+  display:flex;align-items:center;gap:6px;
+  font-size:11.5px;color:var(--dim2);
+  padding:5px 10px 5px 8px;border-radius:20px;
+  border:1px solid var(--line);background:rgba(255,255,255,.03);
+  transition:.25s;
+}
+.dot::before{
+  content:"";width:6px;height:6px;border-radius:50%;background:#666;
+  transition:.25s;
+}
+.dot.on{color:var(--acc);border-color:rgba(62,224,197,.3);background:rgba(62,224,197,.08)}
+.dot.on::before{background:var(--acc);box-shadow:0 0 8px var(--acc)}
+.dot.off{color:var(--hot);border-color:rgba(255,95,95,.3);background:rgba(255,95,95,.08)}
+.dot.off::before{background:var(--hot)}
+
+/* ---------- stats ---------- */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:16px}
+.stat{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:12px 10px 11px;text-align:center;
+}
+.stat .k{display:block;font-size:10.5px;color:var(--dim2);margin-bottom:5px;letter-spacing:.3px}
+.stat .v{display:block;font-size:17px;font-weight:650;line-height:1.25;transition:color .3s}
+.stat .v small{font-size:10px;font-weight:500;color:var(--dim2);margin-left:2px}
+.v.ok{color:var(--acc)}
+.v.warm{color:var(--warm)}
+.v.hot{color:var(--hot)}
+
+/* ---------- cluster ---------- */
+.cluster{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:14px 15px 12px;margin-bottom:9px;
+}
+.cl-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px}
+.cl-name{font-size:12.5px;font-weight:600;color:var(--dim)}
+.cl-name i{font-style:normal;font-size:10.5px;color:var(--dim2);margin-left:5px;font-weight:400}
+.cl-gov{font-size:10px;color:var(--dim2);font-family:ui-monospace,Menlo,monospace;letter-spacing:.2px}
+.cl-freq{display:flex;align-items:baseline;gap:4px;margin:2px 0 11px}
+.cl-freq b{font-size:27px;font-weight:680;letter-spacing:-.5px;line-height:1}
+.cl-freq em{font-style:normal;font-size:11px;color:var(--dim2);font-weight:500}
+
+.track{position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,.075);overflow:visible}
+.band{
+  position:absolute;top:0;height:100%;border-radius:3px;
+  background:linear-gradient(90deg,rgba(62,224,197,.22),rgba(92,140,255,.30));
+  border-left:1px solid rgba(62,224,197,.55);
+  border-right:1px solid rgba(92,140,255,.55);
+  transition:left .5s cubic-bezier(.4,0,.2,1),width .5s cubic-bezier(.4,0,.2,1);
+}
+.needle{
+  position:absolute;top:50%;width:3px;height:15px;border-radius:2px;
+  background:linear-gradient(180deg,var(--acc),var(--acc2));
+  box-shadow:0 0 10px rgba(62,224,197,.75);
+  transform:translate(-50%,-50%);
+  transition:left .5s cubic-bezier(.4,0,.2,1);
+}
+.cl-bot{display:flex;justify-content:space-between;margin-top:9px;font-size:10px;color:var(--dim2)}
+
+/* ---------- section title ---------- */
+.h2{
+  display:flex;align-items:center;gap:8px;
+  font-size:11.5px;font-weight:600;color:var(--dim2);
+  letter-spacing:1.2px;margin:22px 2px 10px;
+}
+.h2::after{content:"";flex:1;height:1px;background:var(--line)}
+
+/* ---------- profiles ---------- */
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.prof{
+  position:relative;overflow:hidden;
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:12px 6px 10px;color:var(--txt);font-family:inherit;
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  transition:.22s cubic-bezier(.4,0,.2,1);
+}
+.prof b{font-size:13.5px;font-weight:600}
+.prof i{font-style:normal;font-size:9.5px;color:var(--dim2);letter-spacing:.2px}
+.prof:active{transform:scale(.96)}
+.prof.sel{
+  border-color:rgba(62,224,197,.55);
+  background:linear-gradient(150deg,rgba(62,224,197,.19),rgba(92,140,255,.10));
+  box-shadow:0 6px 20px rgba(62,224,197,.13),inset 0 0 0 1px rgba(62,224,197,.12);
+}
+.prof.sel b{color:var(--acc)}
+.prof.sel i{color:rgba(233,239,248,.5)}
+.prof[disabled]{opacity:.5}
+
+/* ---------- panel ---------- */
+.panel{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  margin-top:10px;overflow:hidden;
+}
+summary{
+  list-style:none;cursor:pointer;padding:14px 16px;
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:13.5px;font-weight:600;
+}
+summary::-webkit-details-marker{display:none}
+summary::after{
+  content:"";width:7px;height:7px;flex:none;margin-left:auto;
+  border-right:1.6px solid var(--dim2);border-bottom:1.6px solid var(--dim2);
+  transform:rotate(45deg) translate(-2px,-2px);transition:.25s;
+}
+summary .live{
+  display:none;margin-left:8px;
+  font-size:10px;font-weight:500;line-height:1.6;
+  color:var(--acc);background:rgba(62,224,197,.15);
+  padding:1px 7px;border-radius:8px;
+}
+summary .live.on{display:inline-block}
+details[open] summary::after{transform:rotate(-135deg) translate(-2px,-2px)}
+.pbody{padding:0 16px 16px}
+
+/* ---------- slider rows ---------- */
+.sgroup{margin-bottom:15px}
+.sgroup:last-child{margin-bottom:2px}
+.sgroup-h{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:11px;color:var(--dim2);margin-bottom:7px;letter-spacing:.3px;
+}
+.sgroup-h b{color:var(--dim);font-weight:600;font-size:11px;font-variant-numeric:tabular-nums}
+.srow{display:flex;align-items:center;gap:10px;margin-bottom:3px}
+.srow .tag{font-size:10.5px;color:var(--dim2);width:26px;flex:none}
+.srow .num{
+  font-size:11px;font-weight:600;color:var(--txt);width:70px;flex:none;
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  flex:1;height:24px;background:transparent;min-width:0;
+  touch-action:pan-y;
+}
+input[type=range]::-webkit-slider-runnable-track{
+  height:5px;border-radius:3px;
+  background:linear-gradient(90deg,rgba(62,224,197,.85) var(--pct,0%),rgba(255,255,255,.09) var(--pct,0%));
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:17px;height:17px;border-radius:50%;
+  background:#fff;margin-top:-6px;border:2.5px solid var(--acc);
+  box-shadow:0 0 0 4px rgba(62,224,197,.13),0 2px 7px rgba(0,0,0,.55);
+}
+
+/* ---------- switch / rows ---------- */
+.row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05);
+  font-size:13px;
+}
+.row:last-child{border-bottom:none;padding-bottom:2px}
+.row.col{flex-direction:column;align-items:stretch;gap:9px}
+.row .rv{font-size:12px;color:var(--dim);font-weight:600}
+.row .rh{display:flex;align-items:center;justify-content:space-between;width:100%}
+.row .rh b{color:var(--acc);font-weight:600;font-size:12.5px}
+.sw{position:relative;width:44px;height:26px;flex:none}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;z-index:2}
+.sw i{
+  position:absolute;inset:0;border-radius:14px;background:rgba(255,255,255,.11);
+  transition:.25s cubic-bezier(.4,0,.2,1);
+}
+.sw i::after{
+  content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;
+  border-radius:50%;background:#fff;transition:.25s cubic-bezier(.4,0,.2,1);
+  box-shadow:0 2px 5px rgba(0,0,0,.4);
+}
+.sw input:checked + i{background:linear-gradient(90deg,var(--acc),#4fc3ff)}
+.sw input:checked + i::after{transform:translateX(18px)}
+
+/* ---------- footer ---------- */
+footer{
+  margin-top:24px;text-align:center;font-size:10.5px;color:var(--dim2);
+  line-height:1.9;
+}
+footer span{color:rgba(233,239,248,.45)}
+
+/* ---------- toast ---------- */
+.toast{
+  position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 30px);
+  transform:translate(-50%,16px);
+  max-width:86vw;padding:11px 18px;border-radius:13px;
+  background:rgba(20,28,38,.94);border:1px solid rgba(62,224,197,.35);
+  color:var(--txt);font-size:12.5px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+  opacity:0;pointer-events:none;transition:.28s cubic-bezier(.4,0,.2,1);
+  backdrop-filter:blur(10px);z-index:99;
+  box-shadow:0 10px 30px rgba(0,0,0,.6);
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.err{border-color:rgba(255,95,95,.45);color:#ffb0b0}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hd-l">
+    <div class="logo">Y700</div>
+    <div>
+      <h1>CPU 调频</h1>
+      <div class="sub">骁龙 870 · 三集群</div>
+    </div>
+  </div>
+  <div class="dot" id="dot">连接中</div>
+</header>
+
+<div class="stats">
+  <div class="stat"><span class="k">当前档位</span><span class="v" id="profName">—</span></div>
+  <div class="stat"><span class="k">CPU 温度</span><span class="v" id="temp">—</span></div>
+  <div class="stat"><span class="k">自动维持</span><span class="v" id="watchState">—</span></div>
+</div>
+
+<div id="clusters"></div>
+
+<div class="h2">档位切换</div>
+<div class="pgrid" id="pgrid">
+  <button class="prof" data-p="powersave"><b>省电</b><i>1.07 / 1.57 / 1.86</i></button>
+  <button class="prof" data-p="balanced"><b>均衡</b><i>1.52 / 2.05 / 2.55</i></button>
+  <button class="prof" data-p="performance"><b>性能</b><i>1.80 / 2.42 / 2.84</i></button>
+  <button class="prof" data-p="game"><b>游戏</b><i>高底频 · 顶格</i></button>
+  <button class="prof" data-p="max"><b>极速</b><i>全锁最高</i></button>
+  <button class="prof" data-p="stock"><b>出厂</b><i>恢复默认</i></button>
+</div>
+
+<details class="panel">
+  <summary>自定义频率<span class="live" id="customLive">生效中</span></summary>
+  <div class="pbody" id="sliders"></div>
+</details>
+
+<details class="panel">
+  <summary>高级设置</summary>
+  <div class="pbody">
+    <div class="row">
+      <span>自动维持</span>
+      <label class="sw"><input type="checkbox" id="watch"><i></i></label>
+    </div>
+    <div class="row col">
+      <div class="rh"><span>温度保护上限</span><b id="tlVal">48 °C</b></div>
+      <input type="range" id="tl" min="38" max="60" step="1" value="48" style="--pct:45%">
+      <div class="rh" style="font-size:10.5px;color:var(--dim2)">
+        <span>更保守</span><span>更激进</span>
+      </div>
+    </div>
+  </div>
+</details>
+
+<footer>
+  数据每 2 秒刷新 · 改动立即生效<br>
+  <span>仅监听 127.0.0.1 · 温度达上限后交由系统温控接管</span>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+"use strict";
+
+var PNAME = {
+  powersave:"省电", balanced:"均衡", performance:"性能",
+  game:"游戏", max:"极速", stock:"出厂", custom:"自定义"
+};
+var CLUSTERS = [
+  {id:"p0", label:"小核", cpus:"0-3"},
+  {id:"p4", label:"大核", cpus:"4-6"},
+  {id:"p7", label:"超大核", cpus:"7"}
+];
+
+var S = null;
+var dragging = {};
+var timer = null;
+var $ = function(s){ return document.querySelector(s); };
+
+function fmt(f){ return (f / 1000000).toFixed(2); }
+
+function clusterOf(id){
+  if(!S) return null;
+  for(var i=0;i<S.clusters.length;i++){
+    if(S.clusters[i].id === id) return S.clusters[i];
+  }
+  return null;
+}
+
+/* ---------- 构建骨骼 ---------- */
+(function buildClusters(){
+  var host = $("#clusters"), html = "";
+  CLUSTERS.forEach(function(c){
+    html += '<div class="cluster" data-id="'+c.id+'">'
+      + '<div class="cl-top">'
+      +   '<span class="cl-name">'+c.label+'<i>CPU '+c.cpus+'</i></span>'
+      +   '<span class="cl-gov">—</span>'
+      + '</div>'
+      + '<div class="cl-freq"><b>0.00</b><em>GHz</em></div>'
+      + '<div class="track"><div class="band"></div><div class="needle"></div></div>'
+      + '<div class="cl-bot"><span>—</span><span>—</span></div>'
+      + '</div>';
+  });
+  host.innerHTML = html;
+})();
+
+(function buildSliders(){
+  var host = $("#sliders"), html = "";
+  CLUSTERS.forEach(function(c, idx){
+    html += '<div class="sgroup" data-cl="'+c.id+'">'
+      + '<div class="sgroup-h"><span>'+c.label+' · CPU '+c.cpus+'</span><b>—</b></div>'
+      + '<div class="srow">'
+      +   '<span class="tag">最低</span>'
+      +   '<input type="range" data-cl="'+c.id+'" data-w="min" min="0" max="1" step="1" value="0">'
+      +   '<span class="num">—</span>'
+      + '</div>'
+      + '<div class="srow">'
+      +   '<span class="tag">最高</span>'
+      +   '<input type="range" data-cl="'+c.id+'" data-w="max" min="0" max="1" step="1" value="0">'
+      +   '<span class="num">—</span>'
+      + '</div>'
+      + '</div>';
+  });
+  host.innerHTML = html;
+})();
+
+/* ---------- API ---------- */
+function api(params){
+  var qs = Object.keys(params).map(function(k){
+    return k + "=" + encodeURIComponent(params[k]);
+  }).join("&");
+  return fetch("/cgi-bin/api.cgi?" + qs, {cache:"no-store"})
+    .then(function(r){
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function(j){
+      if(!j.ok) throw new Error(j.error || "操作失败");
+      return j;
+    });
+}
+
+/* ---------- 渲染 ---------- */
+function setOnline(ok){
+  var d = $("#dot");
+  if(ok){ d.className = "dot on"; d.textContent = "已连接"; }
+  else  { d.className = "dot off"; d.textContent = "未连接"; }
+}
+
+function render(j){
+  S = j;
+  setOnline(true);
+
+  $("#profName").textContent = PNAME[j.profile] || j.profile;
+
+  var tEl = $("#temp");
+  if(j.temp > 0){
+    var t = j.temp / 1000;
+    tEl.textContent = t.toFixed(1) + "°";
+    tEl.className = "v " + (t >= 52 ? "hot" : (t >= 45 ? "warm" : "ok"));
+  }else{
+    tEl.textContent = "—";
+    tEl.className = "v";
+  }
+
+  var wEl = $("#watchState");
+  wEl.textContent = j.watchRunning ? "运行中" : (j.watch ? "已停止" : "已关闭");
+  wEl.className = "v " + (j.watchRunning ? "ok" : "");
+
+  // 自定义档位生效提示
+  $("#customLive").classList.toggle("on", j.profile === "custom");
+
+  // 档位按钮
+  var btns = document.querySelectorAll(".prof");
+  for(var i=0;i<btns.length;i++){
+    btns[i].classList.toggle("sel", btns[i].dataset.p === j.profile);
+  }
+
+  // 集群卡片
+  j.clusters.forEach(function(c){
+    var el = document.querySelector('.cluster[data-id="'+c.id+'"]');
+    if(!el) return;
+    var hw = c.hwMax || 1;
+    var minPct = c.min / hw * 100;
+    var maxPct = c.max / hw * 100;
+    var curPct = Math.min(100, c.cur / hw * 100);
+
+    el.querySelector(".cl-freq b").textContent = fmt(c.cur);
+    el.querySelector(".cl-gov").textContent = c.gov;
+    var band = el.querySelector(".band");
+    band.style.left = minPct + "%";
+    band.style.width = Math.max(0.9, maxPct - minPct) + "%";
+    el.querySelector(".needle").style.left = curPct + "%";
+    var bot = el.querySelectorAll(".cl-bot span");
+    bot[0].textContent = fmt(c.hwMin);
+    bot[1].textContent = fmt(c.hwMax) + " GHz";
+  });
+
+  syncSliders(j);
+
+  // 高级设置
+  $("#watch").checked = !!j.watch;
+  var tl = Math.round(j.tempLimit / 1000);
+  if(document.activeElement !== $("#tl")){
+    $("#tl").value = tl;
+  }
+  $("#tlVal").textContent = tl + " °C";
+  $("#tl").style.setProperty("--pct", ((tl - 38) / 22 * 100) + "%");
+}
+
+function nearestIdx(arr, v){
+  var best = 0, d = Infinity;
+  for(var i=0;i<arr.length;i++){
+    var x = Math.abs(arr[i] - v);
+    if(x < d){ d = x; best = i; }
+  }
+  return best;
+}
+
+function syncSliders(j){
+  j.clusters.forEach(function(c){
+    if(!c.avail || !c.avail.length) return;
+    var iMin = nearestIdx(c.avail, c.min);
+    var iMax = nearestIdx(c.avail, c.max);
+    if(iMax < iMin) iMax = iMin;
+    var last = c.avail.length - 1;
+    var sMin = document.querySelector('input[data-cl="'+c.id+'"][data-w="min"]');
+    var sMax = document.querySelector('input[data-cl="'+c.id+'"][data-w="max"]');
+    if(!sMin || !sMax) return;
+
+    sMin.max = last; sMax.max = last;
+
+    // 防止把 min 拖过 max / max 拖过 min
+    if(!dragging[c.id + "min"]) sMin.max = iMax;
+    if(!dragging[c.id + "max"]) sMax.min = iMin;
+
+    if(!dragging[c.id + "min"]){
+      sMin.value = iMin;
+      sMin.style.setProperty("--pct", (iMin / last * 100) + "%");
+      sMin.parentNode.querySelector(".num").textContent = fmt(c.avail[iMin]) + " GHz";
+    }
+    if(!dragging[c.id + "max"]){
+      sMax.value = iMax;
+      sMax.style.setProperty("--pct", (iMax / last * 100) + "%");
+      sMax.parentNode.querySelector(".num").textContent = fmt(c.avail[iMax]) + " GHz";
+    }
+    var head = document.querySelector('.sgroup[data-cl="'+c.id+'"] .sgroup-h b');
+    if(head) head.textContent = fmt(c.avail[iMin]) + " – " + fmt(c.avail[iMax]) + " GHz";
+  });
+}
+
+/* ---------- toast ---------- */
+var toastTimer = null;
+function toast(msg, isErr){
+  var el = $("#toast");
+  el.textContent = msg;
+  el.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ el.className = "toast"; }, 1900);
+}
+
+/* ---------- 交互 ---------- */
+document.querySelectorAll(".prof").forEach(function(b){
+  b.addEventListener("click", function(){
+    var p = b.dataset.p;
+    b.disabled = true;
+    api({action:"apply", profile:p})
+      .then(function(j){ render(j); toast("已切换到「" + (PNAME[p] || p) + "」"); })
+      .catch(function(e){ toast(e.message, true); })
+      .then(function(){ b.disabled = false; });
+  });
+});
+
+document.querySelectorAll('#sliders input[type=range]').forEach(function(inp){
+  var key = inp.dataset.cl + inp.dataset.w;
+
+  inp.addEventListener("pointerdown", function(){ dragging[key] = true; });
+  inp.addEventListener("pointerup", function(){
+    setTimeout(function(){ dragging[key] = false; }, 400);
+  });
+  inp.addEventListener("pointercancel", function(){ dragging[key] = false; });
+
+  inp.addEventListener("input", function(){
+    var c = clusterOf(inp.dataset.cl);
+    if(!c || !c.avail) return;
+    var i = +inp.value;
+    inp.style.setProperty("--pct", (i / (c.avail.length - 1) * 100) + "%");
+    inp.parentNode.querySelector(".num").textContent = fmt(c.avail[i]) + " GHz";
+  });
+
+  inp.addEventListener("change", function(){
+    var id = inp.dataset.cl;
+    var c = clusterOf(id);
+    if(!c || !c.avail) return;
+    var iMin = +document.querySelector('input[data-cl="'+id+'"][data-w="min"]').value;
+    var iMax = +document.querySelector('input[data-cl="'+id+'"][data-w="max"]').value;
+    var lo = Math.min(iMin, iMax), hi = Math.max(iMin, iMax);
+    var mn = c.avail[lo], mx = c.avail[hi];
+    api({action:"set", cluster:id, min:mn, max:mx})
+      .then(function(j){
+        render(j);
+        toast("已应用 " + fmt(mn) + " – " + fmt(mx) + " GHz");
+      })
+      .catch(function(e){ toast(e.message, true); });
+  });
+});
+
+$("#watch").addEventListener("change", function(e){
+  api({action:"watch", value: e.target.checked ? 1 : 0})
+    .then(function(j){ render(j); toast(e.target.checked ? "自动维持已开启" : "自动维持已关闭"); })
+    .catch(function(err){ toast(err.message, true); });
+});
+
+$("#tl").addEventListener("input", function(e){
+  var v = +e.target.value;
+  $("#tlVal").textContent = v + " °C";
+  e.target.style.setProperty("--pct", ((v - 38) / 22 * 100) + "%");
+});
+$("#tl").addEventListener("change", function(e){
+  var v = +e.target.value;
+  api({action:"temp_limit", value: v * 1000})
+    .then(function(j){ render(j); toast("温度上限设为 " + v + " °C"); })
+    .catch(function(err){ toast(err.message, true); });
+});
+
+/* ---------- 轮询 ---------- */
+function tick(){
+  clearTimeout(timer);
+  api({action:"state"})
+    .then(function(j){ render(j); })
+    .catch(function(){ setOnline(false); })
+    .then(function(){
+      if(!document.hidden) timer = setTimeout(tick, 2000);
+    });
+}
+
+document.addEventListener("visibilitychange", function(){
+  if(!document.hidden) tick();
+});
+
+// 带 ?open=1 或 #open 打开时自动展开所有面板
+if(/[?&]open=1/.test(location.search) || location.hash === "#open"){
+  document.querySelectorAll("details").forEach(function(d){ d.open = true; });
+}
+
+tick();
+})();
+</script>
+</body>
+</html>
