@@ -3,7 +3,7 @@
 ![license](https://img.shields.io/badge/license-MIT-blue.svg)
 ![platform](https://img.shields.io/badge/platform-Magisk%20%7C%20KernelSU%20%7C%20Kitsune-brightgreen)
 ![device](https://img.shields.io/badge/device-TB--9707F%20%2F%20sheng-orange)
-![generation](https://img.shields.io/badge/generation-Y700%20Gen%201%20(2022)-red)
+![generation](https://img.shields.io/badge/generation-Y700%20Gen%201%20%282022%29-red)
 
 联想拯救者 **Y700 一代（2022 款）** 的 CPU 频率分档控制模块。
 
