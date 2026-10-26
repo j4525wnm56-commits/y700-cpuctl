@@ -51,22 +51,22 @@
 
 **方式一：管理器刷入（推荐）**
 
-下载 Release 里的 `y700-cpuctl-v1.2.zip`，在 Magisk / KernelSU 的「模块 → 从本地安装」中选它，重启。
+下载 Release 里的 `y700-cpuctl-v1.2.1.zip`，在 Magisk / KernelSU 的「模块 → 从本地安装」中选它，重启。
 
 **方式二：命令行**
 
 ```bash
-adb push y700-cpuctl-v1.2.zip /data/local/tmp/
-su -c 'magisk --install-module /data/local/tmp/y700-cpuctl-v1.2.zip'
+adb push y700-cpuctl-v1.2.1.zip /data/local/tmp/
+su -c 'magisk --install-module /data/local/tmp/y700-cpuctl-v1.2.1.zip'
 # 重启生效
 ```
 
 **方式三：不重启立即用（调试用）**
 
 ```bash
-adb push y700-cpuctl-v1.2.zip /data/local/tmp/
+adb push y700-cpuctl-v1.2.1.zip /data/local/tmp/
 su -c 'M=/data/adb/modules/y700_cpuctl; rm -rf $M; mkdir -p $M; \
-       busybox unzip -o /data/local/tmp/y700-cpuctl-v1.2.zip -d $M >/dev/null; \
+       busybox unzip -o /data/local/tmp/y700-cpuctl-v1.2.1.zip -d $M >/dev/null; \
        chmod 755 $M/bin/* $M/system/bin/* $M/service.sh $M/action.sh $M/uninstall.sh \
                  $M/webroot/cgi-bin/api.cgi'
 su -c '/data/adb/modules/y700_cpuctl/bin/cpuctl apply balanced'
